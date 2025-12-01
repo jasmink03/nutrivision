@@ -96,4 +96,5 @@ if st.button("🍽️ Analyze"):
         st.subheader("🧠 AI Analysis")
         st.write(result)
 
-st.caption("Built with ❤️ by Lavanya Srivastava — Powered by Groq Vision")
+
+st.caption("Built with ❤️ Jasmin — Powered by Groq Vision")
