@@ -1,12 +1,15 @@
 # app.py — NutriVision (Groq Vision, current models)
 
-from dotenv import load_dotenv
-import os, io, base64, requests
+import os
+import io
+import base64
+import requests
 from PIL import Image
 import streamlit as st
+from dotenv import load_dotenv
 
 # -------------------------------
-# Env / key
+# Load environment variables
 # -------------------------------
 load_dotenv()
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
@@ -15,31 +18,41 @@ if not GROQ_API_KEY:
         GROQ_API_KEY = st.secrets["GROQ_API_KEY"]
     except Exception:
         GROQ_API_KEY = None
+
 if not GROQ_API_KEY:
     st.error("❌ Missing GROQ_API_KEY. Add it to .env (local) or Streamlit Secrets (cloud).")
     st.stop()
 
 # -------------------------------
-# App config
+# App configuration
 # -------------------------------
-st.set_page_config(page_title="NutriVision AI (Groq)")
+st.set_page_config(
+    page_title="NutriVision AI (Groq)",
+    page_icon="🥗",
+    layout="centered",
+    initial_sidebar_state="expanded",
+)
 st.title("🥗 NutriVision — AI-Powered Food & Calorie Analyzer")
 
 GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
-# ✅ Use a current Groq vision model:
-MODEL_NAME = "meta-llama/llama-4-scout-17b-16e-instruct"  # or "meta-llama/llama-4-maverick-17b-128e-instruct"
-HEADERS = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
+MODEL_NAME = "meta-llama/llama-4-scout-17b-16e-instruct"
+HEADERS = {
+    "Authorization": f"Bearer {GROQ_API_KEY}",
+    "Content-Type": "application/json"
+}
 
 # -------------------------------
-# Helpers
+# Helper functions
 # -------------------------------
 def encode_image_to_b64(image: Image.Image) -> str:
+    """Convert PIL Image to base64 string for Groq API."""
     buf = io.BytesIO()
     image.save(buf, format="PNG")
     return base64.b64encode(buf.getvalue()).decode("utf-8")
 
 def analyze_food_image(prompt: str, image: Image.Image, temperature: float = 0.3) -> str:
-    img_b64 = encode_image_to_b64(image)  # keep image < ~4MB b64 per Groq limits
+    """Send image and prompt to Groq Vision API and return the AI response."""
+    img_b64 = encode_image_to_b64(image)  # keep image < ~4MB per Groq limits
     payload = {
         "model": MODEL_NAME,
         "messages": [
@@ -47,7 +60,7 @@ def analyze_food_image(prompt: str, image: Image.Image, temperature: float = 0.3
                 "role": "user",
                 "content": [
                     {"type": "text", "text": prompt},
-                    {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img_b64}" }},
+                    {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img_b64}"}},
                 ],
             }
         ],
@@ -55,6 +68,7 @@ def analyze_food_image(prompt: str, image: Image.Image, temperature: float = 0.3
         "temperature": temperature,
         "stream": False,
     }
+
     try:
         resp = requests.post(GROQ_API_URL, headers=HEADERS, json=payload, timeout=120)
         if not resp.ok:
@@ -65,14 +79,15 @@ def analyze_food_image(prompt: str, image: Image.Image, temperature: float = 0.3
         data = resp.json()
         return data["choices"][0]["message"]["content"]
     except Exception as e:
-        return f"⚠️ Error: {e}"
+        return f"⚠️ Error communicating with API: {e}"
 
 # -------------------------------
-# UI
+# Sidebar — model settings
 # -------------------------------
 st.sidebar.header("Model Settings")
 temperature = st.sidebar.slider("Creativity (temperature)", 0.0, 1.0, 0.3, 0.05)
 
+# Default prompt for AI
 default_prompt = (
     "You are a professional nutritionist. Identify each visible food item in the image. "
     "Estimate approximate calories per item and provide a total in this format:\n"
@@ -81,12 +96,21 @@ default_prompt = (
 )
 user_prompt = st.text_area("Instruction to the AI", default_prompt, height=140)
 
+# -------------------------------
+# Image upload
+# -------------------------------
 uploaded = st.file_uploader("Upload a meal photo (JPG/PNG)", type=["jpg", "jpeg", "png"])
 image = None
 if uploaded:
-    image = Image.open(uploaded).convert("RGB")
-    st.image(image, caption="Uploaded Image", use_container_width=True)
+    try:
+        image = Image.open(uploaded).convert("RGB")
+        st.image(image, caption="Uploaded Image", use_container_width=True)
+    except Exception as e:
+        st.error(f"Could not open image: {e}")
 
+# -------------------------------
+# Analyze button
+# -------------------------------
 if st.button("🍽️ Analyze"):
     if image is None:
         st.warning("Please upload a meal image first.")
@@ -96,5 +120,7 @@ if st.button("🍽️ Analyze"):
         st.subheader("🧠 AI Analysis")
         st.write(result)
 
-
+# -------------------------------
+# Footer
+# -------------------------------
 st.caption("Built with ❤️ Jasmin — Powered by Groq Vision")
