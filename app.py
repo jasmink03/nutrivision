@@ -104,7 +104,7 @@ image = None
 if uploaded:
     try:
         image = Image.open(uploaded).convert("RGB")
-        st.image(image, caption="Uploaded Image", use_container_width=True)
+        st.image(image, caption="Uploaded Image", use_column_width=True)  # fixed argument
     except Exception as e:
         st.error(f"Could not open image: {e}")
 
