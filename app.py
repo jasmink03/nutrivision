@@ -1,4 +1,4 @@
-# app.py — NutriVision (Groq Vision, current models)
+# app.py — NutriVision (Groq Vision, optimized with image compression)
 
 import os
 import io
@@ -32,6 +32,7 @@ st.set_page_config(
     layout="centered",
     initial_sidebar_state="expanded",
 )
+
 st.title("🥗 NutriVision — AI-Powered Food & Calorie Analyzer")
 
 GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
@@ -42,17 +43,39 @@ HEADERS = {
 }
 
 # -------------------------------
-# Helper functions
+# Compression helper
+# -------------------------------
+def compress_image(uploaded_file, max_size_kb=350):
+    """Compress image to stay within Groq 4MB limit."""
+    img = Image.open(uploaded_file)
+    img = img.convert("RGB")
+
+    quality = 85
+    buffer = io.BytesIO()
+    img.save(buffer, format="JPEG", quality=quality)
+
+    while buffer.getbuffer().nbytes > max_size_kb * 1024 and quality > 10:
+        quality -= 5
+        buffer = io.BytesIO()
+        img.save(buffer, format="JPEG", quality=quality)
+
+    buffer.seek(0)
+    return buffer
+
+# -------------------------------
+# Base64 encoding
 # -------------------------------
 def encode_image_to_b64(image: Image.Image) -> str:
-    """Convert PIL Image to base64 string for Groq API."""
     buf = io.BytesIO()
-    image.save(buf, format="PNG")
+    image.save(buf, format="JPEG")
     return base64.b64encode(buf.getvalue()).decode("utf-8")
 
+# -------------------------------
+# API call
+# -------------------------------
 def analyze_food_image(prompt: str, image: Image.Image, temperature: float = 0.3) -> str:
-    """Send image and prompt to Groq Vision API and return the AI response."""
-    img_b64 = encode_image_to_b64(image)  # keep image < ~4MB per Groq limits
+    img_b64 = encode_image_to_b64(image)
+
     payload = {
         "model": MODEL_NAME,
         "messages": [
@@ -60,7 +83,7 @@ def analyze_food_image(prompt: str, image: Image.Image, temperature: float = 0.3
                 "role": "user",
                 "content": [
                     {"type": "text", "text": prompt},
-                    {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img_b64}"}},
+                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"}},
                 ],
             }
         ],
@@ -71,23 +94,28 @@ def analyze_food_image(prompt: str, image: Image.Image, temperature: float = 0.3
 
     try:
         resp = requests.post(GROQ_API_URL, headers=HEADERS, json=payload, timeout=120)
+
+        if resp.status_code == 413:
+            return "⚠️ The image is still too large. Try uploading a smaller image."
+
         if not resp.ok:
             try:
                 return f"⚠️ API error {resp.status_code}: {resp.json()}"
             except Exception:
                 resp.raise_for_status()
+
         data = resp.json()
         return data["choices"][0]["message"]["content"]
+
     except Exception as e:
         return f"⚠️ Error communicating with API: {e}"
 
 # -------------------------------
-# Sidebar — model settings
+# Sidebar settings
 # -------------------------------
 st.sidebar.header("Model Settings")
 temperature = st.sidebar.slider("Creativity (temperature)", 0.0, 1.0, 0.3, 0.05)
 
-# Default prompt for AI
 default_prompt = (
     "You are a professional nutritionist. Identify each visible food item in the image. "
     "Estimate approximate calories per item and provide a total in this format:\n"
@@ -101,12 +129,19 @@ user_prompt = st.text_area("Instruction to the AI", default_prompt, height=140)
 # -------------------------------
 uploaded = st.file_uploader("Upload a meal photo (JPG/PNG)", type=["jpg", "jpeg", "png"])
 image = None
+
 if uploaded:
-    try:
-        image = Image.open(uploaded).convert("RGB")
-        st.image(image, caption="Uploaded Image", use_column_width=True)  # fixed argument
-    except Exception as e:
-        st.error(f"Could not open image: {e}")
+    # ---- file size check ----
+    MAX_MB = 2
+    if uploaded.size > MAX_MB * 1024 * 1024:
+        st.error(f"❌ Image too large ({uploaded.size/1024/1024:.2f} MB). Upload image < {MAX_MB} MB.")
+        st.stop()
+
+    # ---- compress image ----
+    compressed = compress_image(uploaded)
+    image = Image.open(compressed)
+
+    st.image(image, caption="Uploaded Image", use_column_width=True)
 
 # -------------------------------
 # Analyze button
@@ -117,6 +152,7 @@ if st.button("🍽️ Analyze"):
     else:
         with st.spinner("🔍 Analyzing image with Groq Vision..."):
             result = analyze_food_image(user_prompt, image, temperature)
+
         st.subheader("🧠 AI Analysis")
         st.write(result)
 
@@ -124,3 +160,4 @@ if st.button("🍽️ Analyze"):
 # Footer
 # -------------------------------
 st.caption("Built with ❤️ Jasmin — Powered by Groq Vision")
+
