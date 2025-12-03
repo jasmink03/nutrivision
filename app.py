@@ -1,4 +1,4 @@
-# app.py — NutriVision (Groq Vision, optimized with image compression)
+# app.py — NutriVision (Groq Vision, optimized with safe compression)
 
 import os
 import io
@@ -43,32 +43,34 @@ HEADERS = {
 }
 
 # -------------------------------
-# Compression helper
+# Safe image compression
 # -------------------------------
-def compress_image(uploaded_file, max_size_kb=350):
-    """Compress image to stay within Groq 4MB limit."""
-    img = Image.open(uploaded_file)
-    img = img.convert("RGB")
+def prepare_image(uploaded_file):
+    """
+    Compress & resize image safely.
+    Ensures base64 size stays under Groq limit.
+    """
+    img = Image.open(uploaded_file).convert("RGB")
 
-    quality = 85
-    buffer = io.BytesIO()
-    img.save(buffer, format="JPEG", quality=quality)
+    # resize to safe resolution
+    img.thumbnail((900, 900))
 
-    while buffer.getbuffer().nbytes > max_size_kb * 1024 and quality > 10:
-        quality -= 5
-        buffer = io.BytesIO()
-        img.save(buffer, format="JPEG", quality=quality)
+    # compress
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", quality=75)
+    buf.seek(0)
 
-    buffer.seek(0)
-    return buffer
+    return Image.open(buf)
+
 
 # -------------------------------
-# Base64 encoding
+# Base64 encode
 # -------------------------------
 def encode_image_to_b64(image: Image.Image) -> str:
     buf = io.BytesIO()
-    image.save(buf, format="JPEG")
+    image.save(buf, format="JPEG", quality=80)
     return base64.b64encode(buf.getvalue()).decode("utf-8")
+
 
 # -------------------------------
 # API call
@@ -83,7 +85,7 @@ def analyze_food_image(prompt: str, image: Image.Image, temperature: float = 0.3
                 "role": "user",
                 "content": [
                     {"type": "text", "text": prompt},
-                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"}},
+                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"}} ,
                 ],
             }
         ],
@@ -108,43 +110,44 @@ def analyze_food_image(prompt: str, image: Image.Image, temperature: float = 0.3
         return data["choices"][0]["message"]["content"]
 
     except Exception as e:
-        return f"⚠️ Error communicating with API: {e}"
+        return f"⚠️ Error communicating with Groq API: {e}"
+
 
 # -------------------------------
-# Sidebar settings
+# Sidebar
 # -------------------------------
 st.sidebar.header("Model Settings")
 temperature = st.sidebar.slider("Creativity (temperature)", 0.0, 1.0, 0.3, 0.05)
 
 default_prompt = (
     "You are a professional nutritionist. Identify each visible food item in the image. "
-    "Estimate approximate calories per item and provide a total in this format:\n"
+    "Estimate approximate calories per item and provide a total like:\n"
     "1) Item — ~calories\n2) Item — ~calories\nTotal — ~calories\n"
-    "If uncertain, state brief assumptions."
+    "If uncertain, mention assumptions."
 )
+
 user_prompt = st.text_area("Instruction to the AI", default_prompt, height=140)
 
+
 # -------------------------------
-# Image upload
+# Image Upload
 # -------------------------------
 uploaded = st.file_uploader("Upload a meal photo (JPG/PNG)", type=["jpg", "jpeg", "png"])
 image = None
 
 if uploaded:
-    # ---- file size check ----
-    MAX_MB = 2
-    if uploaded.size > MAX_MB * 1024 * 1024:
-        st.error(f"❌ Image too large ({uploaded.size/1024/1024:.2f} MB). Upload image < {MAX_MB} MB.")
+    if uploaded.size > 4 * 1024 * 1024:
+        st.error("❌ Image too large. Upload < 4MB.")
         st.stop()
 
-    # ---- compress image ----
-    compressed = compress_image(uploaded)
-    image = Image.open(compressed)
+    # --- prepare image safely ---
+    image = prepare_image(uploaded)
 
     st.image(image, caption="Uploaded Image", use_column_width=True)
 
+
 # -------------------------------
-# Analyze button
+# Analyze Button
 # -------------------------------
 if st.button("🍽️ Analyze"):
     if image is None:
@@ -156,8 +159,8 @@ if st.button("🍽️ Analyze"):
         st.subheader("🧠 AI Analysis")
         st.write(result)
 
+
 # -------------------------------
 # Footer
 # -------------------------------
 st.caption("Built with ❤️ Jasmin — Powered by Groq Vision")
-
